@@ -1,0 +1,115 @@
+# ---- Secrets & credentials (never commit) ----
+.env
+.env.*
+!.env.example
+*.env
+.envrc
+secrets.json
+credentials.json
+service-account*.json
+gcp-key*.json
+*.pem
+*.key
+*.p12
+*.pfx
+*.keystore
+*.jks
+id_rsa*
+id_ed25519*
+.netrc
+.npmrc
+.yarnrc
+.pypirc
+.aws/
+.ssh/
+*_credentials*
+*_secret*
+*.secret
+
+# ---- Dependencies ----
+node_modules/
+.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+jspm_packages/
+bower_components/
+
+# ---- Next.js / build output ----
+.next/
+out/
+build/
+dist/
+.turbo/
+.swc/
+*.tsbuildinfo
+next-env.d.ts
+
+# ---- Testing / coverage ----
+coverage/
+.nyc_output/
+playwright-report/
+test-results/
+blob-report/
+.playwright/
+
+# ---- Caches & tooling ----
+.cache/
+.parcel-cache/
+.eslintcache
+.stylelintcache
+.vercel/
+.netlify/
+.wrangler/
+.serverless/
+
+# ---- Logs ----
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+.pnpm-debug.log*
+
+# ---- Databases & large data (see README for how to fetch) ----
+*.sqlite
+*.sqlite3
+*.db
+*.dump
+*.sql
+data.csv
+data/raw/
+*.csv.gz
+*.zip
+*.7z
+
+# ---- Python (data/ETL side) ----
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+.ipynb_checkpoints/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ---- Editor / OS ----
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+desktop.ini
+ehthumbs.db
+$RECYCLE.BIN/
+
+# ---- Local agent/tool settings ----
+.claude/settings.local.json
