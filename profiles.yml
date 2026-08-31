@@ -1,0 +1,11 @@
+# Project-local profile. tasks.ps1 sets DBT_PROFILES_DIR to the repo root so a
+# reviewer never has to create ~/.dbt/profiles.yml.
+follow_the_money:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: followthemoney.duckdb
+      threads: 4
+      extensions:
+        - httpfs

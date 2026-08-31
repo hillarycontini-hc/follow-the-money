@@ -113,3 +113,12 @@ $RECYCLE.BIN/
 
 # ---- Local agent/tool settings ----
 .claude/settings.local.json
+
+# ---- dbt / DuckDB / dlt ----
+target/
+dbt_packages/
+logs/
+.user.yml
+*.duckdb
+*.duckdb.wal
+.dlt/secrets.toml

@@ -1,0 +1,17 @@
+[project]
+name = "follow-the-money"
+version = "0.1.0"
+description = "A governed dimensional model over LA City campaign contributions."
+requires-python = "==3.12.*"
+dependencies = [
+    # dbt-core is pinned deliberately. 1.12.x hard-requires dbt-core-experimental-parser,
+    # a Rust package that has been sdist-only since 2.0.0a5 and therefore needs a working
+    # cargo + MSVC toolchain to install. 1.11.14 has no compiled dependency.
+    "dbt-core==1.11.14",
+    "dbt-duckdb==1.11.0",
+    "dbt-metricflow[dbt-duckdb]",
+    "dlt[duckdb]",
+]
+
+[tool.uv]
+package = false

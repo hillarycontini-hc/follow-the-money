@@ -1,0 +1,38 @@
+name: follow_the_money
+version: 0.1.0
+config-version: 2
+
+profile: follow_the_money
+
+model-paths: ["models"]
+macro-paths: ["macros"]
+test-paths: ["tests"]
+seed-paths: ["seeds"]
+analysis-paths: ["analyses"]
+
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]
+
+models:
+  follow_the_money:
+    staging:
+      +materialized: view
+      +schema: staging
+    marts:
+      certified:
+        +materialized: table
+        +schema: marts
+        # Certified models are contracted, versioned, owned, and fail loudly.
+        +group: certified
+        +access: public
+      local:
+        +materialized: view
+        +schema: sandbox
+        # Sandbox models are fast, uncontracted, and may change without notice.
+        # They are private so nothing certified can depend on them.
+        +group: sandbox
+        +access: private
+
+seeds:
+  follow_the_money:
+    +schema: seeds
