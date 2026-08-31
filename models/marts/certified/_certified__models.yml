@@ -1,0 +1,191 @@
+version: 2
+
+models:
+  # ---------------------------------------------------------------------------------
+  - name: fct_contribution
+    description: >
+      GRAIN: one row per itemised monetary or in-kind contribution line as disclosed on
+      a CA460 filing. Excludes loans (Schedule B), public financing (Schedule I),
+      period aggregates, and rows whose date failed validation.
+    config:
+      contract:
+        enforced: true
+    data_tests:
+      - dbt_utils.expression_is_true:
+          name: fct_contribution_holds_only_contribution_schedules
+          expression: "schedule_code in ('A', 'C')"
+    columns:
+      - name: contribution_key
+        data_type: varchar
+        description: Content hash of the business columns plus occurrence index.
+        constraints:
+          - type: not_null
+        data_tests: [unique, not_null]
+      - name: committee_key
+        data_type: varchar
+        description: Foreign key to the dim_committee version current at disclosure.
+        data_tests:
+          - not_null
+          - relationships:
+              to: ref('dim_committee')
+              field: committee_key
+      - name: contribution_date_key
+        data_type: date
+        description: Foreign key to dim_date, role-played as the contribution date.
+        data_tests:
+          - not_null
+          - relationships:
+              to: ref('dim_date')
+              field: date_key
+      - name: schedule_code
+        data_type: varchar
+        data_tests:
+          - not_null
+          - accepted_values:
+              values: ['A', 'C']
+      - name: schedule_name
+        data_type: varchar
+      - name: contribution_type
+        data_type: varchar
+      - name: contribution_description
+        data_type: varchar
+      - name: contributor_name
+        data_type: varchar
+      - name: contributor_city
+        data_type: varchar
+      - name: contributor_state
+        data_type: varchar
+      - name: contributor_zip
+        data_type: varchar
+      - name: contributor_occupation
+        data_type: varchar
+      - name: contributor_employer
+        data_type: varchar
+      - name: is_developer_contribution
+        data_type: boolean
+        description: >
+          The certified real-estate-development classification, derived from
+          contributor occupation. Three wider and narrower variants exist as macros and
+          are exercised in analyses/developer_sensitivity.sql; only this one is blessed.
+      - name: intermediary_name
+        data_type: varchar
+      - name: contribution_date
+        data_type: date
+        data_tests: [not_null]
+      - name: period_begin_date
+        data_type: date
+      - name: period_end_date
+        data_type: date
+      - name: amount
+        data_type: decimal(18,2)
+        description: >
+          Negative values are refunds and redesignations and are retained. Zero values
+          are disclosure rows where no money moved.
+        data_tests: [not_null]
+      - name: is_refund
+        data_type: boolean
+      - name: is_zero_amount
+        data_type: boolean
+      - name: is_duplicated_disclosure
+        data_type: boolean
+        description: >
+          True when another row is byte-identical across all business columns. Not an
+          error flag -- same-day instalments and affiliated-entity disclosure produce
+          legitimate twins.
+      - name: is_self_loan_mirror
+        data_type: boolean
+        description: >
+          True when this contributor giving to this committee is mirrored exactly by a
+          Schedule B loan. Certified money metrics exclude these rows.
+
+  # ---------------------------------------------------------------------------------
+  - name: dim_committee
+    description: >
+      Type 2 committee dimension. One row per committee identity version, with
+      half-open validity intervals. A committee ID may carry many names over time.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [committee_id, version_number]
+    columns:
+      - name: committee_key
+        description: Surrogate key over committee_id plus committee_name.
+        data_tests: [unique, not_null]
+      - name: committee_id
+        data_tests: [not_null]
+      - name: committee_name
+        data_tests: [not_null]
+      - name: version_number
+        data_tests: [not_null]
+      - name: committee_type_code
+        data_tests:
+          - accepted_values:
+              values: ['C', 'O', 'B', 'P', 'G']
+      - name: is_independent_expenditure_type
+        description: >
+          P and G committees face no contribution limits. They are 2.6% of rows and 39%
+          of dollars.
+      - name: valid_from
+        data_tests: [not_null]
+      - name: valid_to
+        description: Start of the next version, or null for the current version.
+      - name: is_current_version
+        data_tests: [not_null]
+
+  # ---------------------------------------------------------------------------------
+  - name: dim_date
+    description: >
+      Conformed date dimension, role-played as contribution date, period end date, and
+      election date. Also serves as the semantic layer's time spine, so metric
+      time-grain rollups and period-over-period offsets resolve against the same
+      calendar the facts join to rather than a second one built for the purpose.
+    time_spine:
+      standard_granularity_column: date_day
+    columns:
+      - name: date_key
+        data_tests: [unique, not_null]
+      - name: date_day
+        granularity: day
+      - name: is_after_developer_ban_adopted
+        description: The ordinance was adopted 2019-12-04.
+      - name: is_after_developer_ban_effective
+        description: >
+          It did not bind until after the March 2022 primary. The gap between adoption
+          and effect is the whole subject of the developer-money analysis.
+
+  # ---------------------------------------------------------------------------------
+  - name: fct_loan_snapshot
+    description: >
+      GRAIN: one row per loan balance re-declared on a filing period. A periodic
+      snapshot -- 9,750 of 10,748 rows are $0.00 carry-forwards. Sum the dollars; never
+      count the rows.
+    columns:
+      - name: loan_snapshot_key
+        data_tests: [unique, not_null]
+      - name: committee_key
+        data_tests:
+          - relationships:
+              to: ref('dim_committee')
+              field: committee_key
+      - name: is_carry_forward
+        data_tests: [not_null]
+
+  # ---------------------------------------------------------------------------------
+  - name: fct_public_financing
+    description: >
+      GRAIN: one row per Schedule I miscellaneous cash increase. 91.8% is public
+      matching funds -- taxpayer money, not contributions.
+    columns:
+      - name: public_financing_key
+        data_tests: [unique, not_null]
+      - name: is_public_matching_funds
+        data_tests: [not_null]
+
+  # ---------------------------------------------------------------------------------
+  - name: fct_unitemized_aggregate
+    description: >
+      GRAIN: one row per period-aggregate disclosure. No contributor attached. Cannot
+      enter donor-level analysis and cannot be added to itemised totals at the same
+      grain.
+    columns:
+      - name: unitemized_key
+        data_tests: [unique, not_null]

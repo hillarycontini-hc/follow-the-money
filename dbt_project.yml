@@ -18,6 +18,14 @@ models:
     staging:
       +materialized: view
       +schema: staging
+    intermediate:
+      +materialized: view
+      +schema: intermediate
+      # Intermediate models are part of the certified lineage, not a third tier. They
+      # are protected rather than public: reusable inside this project, not part of the
+      # published interface.
+      +group: certified
+      +access: protected
     marts:
       certified:
         +materialized: table
