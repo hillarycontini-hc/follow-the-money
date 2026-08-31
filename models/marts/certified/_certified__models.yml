@@ -156,8 +156,11 @@ models:
   - name: fct_loan_snapshot
     description: >
       GRAIN: one row per loan balance re-declared on a filing period. A periodic
-      snapshot -- 9,750 of 10,748 rows are $0.00 carry-forwards. Sum the dollars; never
-      count the rows.
+      snapshot: 2,762 of this fact's 3,678 rows are $0.00 carry-forwards. Sum the
+      dollars; never count the rows -- a row is a filing period, not a loan.
+
+      Schedule B holds 10,748 rows in the source, of which 9,750 carry $0.00; this fact
+      contains only the 3,678 that are itemised and carry a plausible date.
     columns:
       - name: loan_snapshot_key
         data_tests: [unique, not_null]
@@ -166,6 +169,18 @@ models:
           - relationships:
               to: ref('dim_committee')
               field: committee_key
+      - name: period_end_date_key
+        description: >
+          dim_date in its second role. fct_contribution joins the same dimension as the
+          contribution date; this joins it as the filing period end. Conforming that
+          role is what lets a drill-across mean the same thing by a year on both sides
+          -- see analyses/drill_across_committee_year.sql -- and it is the role most
+          likely to break first, because a period end can run past the last contribution
+          date in the data.
+        data_tests:
+          - relationships:
+              to: ref('dim_date')
+              field: date_key
       - name: is_carry_forward
         data_tests: [not_null]
 

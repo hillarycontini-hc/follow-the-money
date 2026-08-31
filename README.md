@@ -40,6 +40,11 @@ No warehouse, no containers, no account. DuckDB in a single file, `profiles.yml`
 repo. Python is pinned to 3.12 and dbt-core to 1.11.14 — [both pins are
 load-bearing](#toolchain-pins).
 
+Or don't run it: the **[model documentation and lineage
+graph](https://hillarycontini-hc.github.io/follow-the-money/)** is published from CI on
+every green build of `main`, so the DAG, the contracts, the tests and the metric
+definitions are browsable without cloning anything.
+
 ## The audit ladder
 
 Every step removes money a reasonable person would have summed.
@@ -64,6 +69,7 @@ models/staging/     typed, validated, quarantined — nothing dropped silently
 models/intermediate/
 models/marts/certified/   contracted, versioned, tested
 models/marts/local/       heuristics, private, may not be depended on
+analyses/           the arguments: audit ladder, drill-across, sensitivity
 scripts/            CI enforcement of the certification boundary
 docs/adr/           why, not what
 research/           the working notes this began as — see ADR 0004
@@ -75,9 +81,11 @@ The source looks like one table of contributions. It is four things wearing the 
 column names:
 
 - **`fct_contribution`** — itemised monetary and in-kind lines. One row per disclosure.
-- **`fct_loan_snapshot`** — Schedule B, a *periodic snapshot*: 9,750 of 10,748 rows are
-  $0.00 carry-forwards re-declaring an outstanding loan each period. One loan spans 19
-  filing periods. Sum the dollars; never count the rows.
+- **`fct_loan_snapshot`** — Schedule B, a *periodic snapshot*: rows are carry-forwards
+  re-declaring an outstanding loan each period. Schedule B holds 10,748 rows in the
+  source, 9,750 of them $0.00; the fact keeps the 3,678 that are itemised and dated,
+  of which 2,762 are carry-forwards. One loan spans 19 filing periods. Sum the dollars;
+  never count the rows — a row is a filing period, not a loan.
 - **`fct_public_financing`** — Schedule I. Recorded in the research notes as an
   unattributable grab-bag. It isn't: 91.8% is public matching funds paid by the City.
 - **`fct_unitemized_aggregate`** — sub-threshold giving with no donor attached.
@@ -88,6 +96,36 @@ Committee `1319104` files under three names across three cycles — supporting o
 candidate in 2013, opposing a different one in 2024. UTLA's `1393480` files under seven.
 A Type 1 dimension would report 2013 mayoral money as raised by a 2024 committee opposing
 a council member.
+
+### The dimensions are conformed, and that is checkable
+
+`analyses/drill_across_committee_year.sql` answers one question from both fact tables at
+once — contributions and loan balances, per committee version, per year.
+
+The two facts are never joined. Each is aggregated to the common grain on its own and
+only the summaries are joined, because a row-level join would fan every contribution out
+across every filing period the committee reported and still return rows. What makes the
+common grain exist is that `dim_committee` is shared, and that `dim_date` is *role-played*
+— joined as the contribution date by one fact and as the period end date by the other, so
+both sides mean the same thing by "2023".
+
+It reproduces the headline finding as a mechanism rather than an assertion:
+
+```
+committee                            year   contributed     mirrored    loan balance
+RICK CARUSO FOR MAYOR 2022           2022      705,492.33         0.00   40,669,946.54
+RICK CARUSO FOR MAYOR 2022           2023   40,669,946.54  40,669,946.54          0.00
+```
+
+The 2022 loan balance reappears as a 2023 contribution, to the cent, and the certified
+metrics net it out. The same pattern shows up under Faisal Gill in 2025, so it is a
+disclosure convention rather than one candidate's quirk.
+
+Across all 1,761 committee-years the query's totals reconcile exactly to each fact
+independently — $405,309,733.91 of contributions and $127,011,979.00 of loan balance —
+which is how you know it has not fanned out. The property it depends on is enforced by
+`relationships` tests on every fact-to-dimension key, including both of `dim_date`'s
+roles.
 
 ### There is no natural key
 
