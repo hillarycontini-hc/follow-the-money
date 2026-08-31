@@ -128,8 +128,8 @@ a fingerprint.
 
 ## What I got wrong
 
-Four claims in this project were confident, plausible, and false. Each was caught by
-measuring rather than by doubting.
+Five claims in this project were confident, plausible, and false. Each was caught by
+measuring or by running it somewhere else -- none by doubting.
 
 | Claim | Reality |
 |---|---|
