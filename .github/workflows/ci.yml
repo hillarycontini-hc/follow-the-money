@@ -10,6 +10,17 @@ on:
   schedule:
     - cron: "0 13 * * *"
 
+# Read-only by default. The deploy job widens this for itself alone; nothing else here
+# needs to write anything back.
+permissions:
+  contents: read
+
+# A Pages deployment is a singleton. Queue rather than cancel, so a run that is midway
+# through publishing is never left half-deployed.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -65,3 +76,44 @@ jobs:
           uv run mf query \
             --metrics contributions_total,developer_contributions \
             --group-by metric_time__year
+
+      # Docs are generated from the same warehouse the tests just ran against, so what
+      # gets published can never describe a build that did not pass.
+      #
+      # --static inlines the manifest and catalog into one self-contained file, rather
+      # than leaving index.html to fetch them at runtime. The catalog carries no row
+      # counts here (dbt-duckdb reports has_stats: false), so the bounded window above
+      # does not publish partial-load figures that would contradict the README. What is
+      # published is structure: lineage, contracts, tests, and metric definitions.
+      - name: Generate docs
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          uv run dbt docs generate --static
+          mkdir -p site
+          cp target/static_index.html site/index.html
+
+      - name: Upload Pages artifact
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  # Publishing is a separate job so the token scope that can write to Pages is not held
+  # by the job that runs the pipeline and executes project SQL.
+  deploy-docs:
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+
+    permissions:
+      pages: write
+      id-token: write
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

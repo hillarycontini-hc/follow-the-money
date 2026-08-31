@@ -120,6 +120,8 @@ $RECYCLE.BIN/
 target/
 dbt_packages/
 logs/
+# Staging directory for the GitHub Pages artifact, assembled by CI from target/.
+site/
 .user.yml
 *.duckdb
 *.duckdb.wal
