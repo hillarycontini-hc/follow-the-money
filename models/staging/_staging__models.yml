@@ -1,0 +1,61 @@
+version: 2
+
+models:
+  - name: stg_contributions
+    description: >
+      One row per contribution line as disclosed, typed and named but unfiltered.
+      Rows that fail validation are flagged rather than removed -- see
+      stg_contributions_quarantine.
+    columns:
+      - name: contribution_key
+        description: Content hash of the business columns plus occurrence index.
+        data_tests:
+          - unique
+          - not_null
+
+      - name: schedule_code
+        description: >
+          A = monetary contribution, B = loan received, C = non-monetary (in-kind),
+          I = miscellaneous increase to cash. These are different kinds of money and
+          must never be summed together.
+        data_tests:
+          - not_null
+          - accepted_values:
+              values: ['A', 'B', 'C', 'I']
+
+      - name: is_itemized
+        description: >
+          False for the period-aggregate rows. Null is impossible by construction and
+          means an unrecognised spelling has appeared upstream.
+        data_tests:
+          - not_null
+
+      - name: amount
+        description: >
+          Parsed contribution amount. Negatives are legitimate (refunds and
+          redesignations); zeros are legitimate (disclosure rows with no money moved).
+        data_tests:
+          - not_null
+
+      - name: contribution_date
+        description: Parsed contribution date. Null only for quarantined rows.
+
+      - name: has_plausible_date
+        description: Whether the parsed date falls in a range a filing could occupy.
+        data_tests:
+          - not_null
+
+  - name: stg_contributions_quarantine
+    description: >
+      Rows excluded from downstream facts because their date cannot be trusted.
+      Kept as a model so the exclusion is visible and countable.
+    columns:
+      - name: contribution_key
+        data_tests:
+          - unique
+          - not_null
+      - name: quarantine_reason
+        data_tests:
+          - not_null
+          - accepted_values:
+              values: ['missing_date', 'unparseable_date', 'implausible_date']

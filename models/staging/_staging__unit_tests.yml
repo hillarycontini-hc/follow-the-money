@@ -1,0 +1,130 @@
+version: 2
+
+# CSV fixtures rather than dicts: stg_contributions selects every source column, and a
+# unit-test fixture has to supply all of them. In CSV form the full width is declared
+# once in the header instead of repeated on every row.
+
+unit_tests:
+  # ---------------------------------------------------------------------------------
+  - name: test_amount_parsing_handles_both_source_shapes
+    model: stg_contributions
+    description: >
+      The same column arrives in two shapes depending on how the data is obtained. The
+      Socrata API returns con_amount as "500.00"; the CSV export of the identical column
+      returns "$1,000.00", with a currency symbol and thousands separators on every one
+      of 418,748 rows. A bare cast succeeds on the first and fails on 100% of the
+      second.
+
+      Negative amounts are real -- refunds and redesignations run to -$1,102,954.14 --
+      and must survive parsing rather than being clamped or dropped.
+    given:
+      - input: source('raw', 'contributions')
+        format: csv
+        rows: |
+          _content_key,con_date,con_name,con_city_nm,con_state_nm,con_zip_cd,con_occp,con_empr,cmt_nm,cmt_id,cmt_type,cand_name,seat_desc,dist_num,con_type,con_desc,con_amount,con_amount_pd_forgiven,schedule,per_beg_date,per_end_date,election_date,election_desc,int_name,int_city_nm,int_zip_cd,int_occp,int_empr,memo,_ingested_at
+          k1,2022-01-05,Ada,LA,CA,90012,,,Cmt,1,C,,,,Monetary Contributions (Itemized),,500.00,,A,,,,,,,,,,,
+          k2,2022-01-05,Ben,LA,CA,90012,,,Cmt,1,C,,,,Monetary Contributions (Itemized),,"$1,000.00",,A,,,,,,,,,,,
+          k3,2022-01-05,Cec,LA,CA,90012,,,Cmt,1,C,,,,Monetary Contributions (Itemized),,"-1,102,954.14",,A,,,,,,,,,,,
+          k4,2022-01-05,Dee,LA,CA,90012,,,Cmt,1,C,,,,Monetary Contributions (Itemized),,0.00,,A,,,,,,,,,,,
+          k5,2022-01-05,Eli,LA,CA,90012,,,Cmt,1,C,,,,Monetary Contributions (Itemized),,"$16,133,477.00",,A,,,,,,,,,,,
+    expect:
+      format: csv
+      rows: |
+        contribution_key,amount
+        k1,500.00
+        k2,1000.00
+        k3,-1102954.14
+        k4,0.00
+        k5,16133477.00
+
+  # ---------------------------------------------------------------------------------
+  - name: test_unitemized_detection_survives_the_source_typo
+    model: stg_contributions
+    description: >
+      Schedule A spells its aggregate rows "Monetary Contributions (Untemized)" --
+      without the second "i" -- while Schedules B, C and I spell it correctly. A filter
+      on '%Unitemized%' therefore misses all 7,064 Schedule A aggregate rows, which hold
+      $170,731,012, and silently admits them to donor-level analysis where they have no
+      donor.
+
+      Schedule I adds a second inconsistency, alternating between "Misc. Increase to
+      Cash" and "Misc. Increases to Cash".
+
+      An unrecognised spelling must classify as null so the not_null test fails the
+      build, rather than defaulting to itemised and quietly moving a third of a billion
+      dollars.
+    given:
+      - input: source('raw', 'contributions')
+        format: csv
+        rows: |
+          _content_key,con_date,con_name,con_city_nm,con_state_nm,con_zip_cd,con_occp,con_empr,cmt_nm,cmt_id,cmt_type,cand_name,seat_desc,dist_num,con_type,con_desc,con_amount,con_amount_pd_forgiven,schedule,per_beg_date,per_end_date,election_date,election_desc,int_name,int_city_nm,int_zip_cd,int_occp,int_empr,memo,_ingested_at
+          a_item,2022-01-05,A,LA,CA,90012,,,Cmt,1,C,,,,Monetary Contributions (Itemized),,1.00,,A,,,,,,,,,,,
+          a_agg,2022-01-05,B,LA,CA,90012,,,Cmt,1,C,,,,Monetary Contributions (Untemized),,1.00,,A,,,,,,,,,,,
+          b_agg,2022-01-05,C,LA,CA,90012,,,Cmt,1,C,,,,Loans Received (Unitemized),,1.00,,B,,,,,,,,,,,
+          c_agg,2022-01-05,D,LA,CA,90012,,,Cmt,1,C,,,,Non-monetary Contributions (Unitemized),,1.00,,C,,,,,,,,,,,
+          i_item,2022-01-05,E,LA,CA,90012,,,Cmt,1,C,,,,Misc. Increase to Cash (Itemized),,1.00,,I,,,,,,,,,,,
+          i_agg,2022-01-05,F,LA,CA,90012,,,Cmt,1,C,,,,Misc. Increases to Cash (Unitemized),,1.00,,I,,,,,,,,,,,
+    expect:
+      format: csv
+      rows: |
+        contribution_key,is_itemized
+        a_item,true
+        a_agg,false
+        b_agg,false
+        c_agg,false
+        i_item,true
+        i_agg,false
+
+  # ---------------------------------------------------------------------------------
+  - name: test_implausible_dates_are_flagged_not_dropped
+    model: stg_contributions
+    description: >
+      The dataset contains contribution dates of 0121-03-08, 1409-08-01 and 1973-05-31,
+      and 24 rows with no date at all. These are upstream data-entry errors. They are
+      flagged so the quarantine population stays countable, rather than filtered away at
+      the boundary where nobody would see them go.
+    given:
+      - input: source('raw', 'contributions')
+        format: csv
+        rows: |
+          _content_key,con_date,con_name,con_city_nm,con_state_nm,con_zip_cd,con_occp,con_empr,cmt_nm,cmt_id,cmt_type,cand_name,seat_desc,dist_num,con_type,con_desc,con_amount,con_amount_pd_forgiven,schedule,per_beg_date,per_end_date,election_date,election_desc,int_name,int_city_nm,int_zip_cd,int_occp,int_empr,memo,_ingested_at
+          good,2022-06-15,A,LA,CA,90012,,,Cmt,1,C,,,,Monetary Contributions (Itemized),,1.00,,A,,,,,,,,,,,
+          ancient,0121-03-08,B,LA,CA,90012,,,Cmt,1,C,,,,Monetary Contributions (Itemized),,1.00,,A,,,,,,,,,,,
+          medieval,1409-08-01,C,LA,CA,90012,,,Cmt,1,C,,,,Monetary Contributions (Itemized),,1.00,,A,,,,,,,,,,,
+          premodern,1973-05-31,D,LA,CA,90012,,,Cmt,1,C,,,,Monetary Contributions (Itemized),,1.00,,A,,,,,,,,,,,
+          missing,,E,LA,CA,90012,,,Cmt,1,C,,,,Monetary Contributions (Itemized),,1.00,,A,,,,,,,,,,,
+    expect:
+      format: csv
+      rows: |
+        contribution_key,has_plausible_date
+        good,true
+        ancient,false
+        medieval,false
+        premodern,false
+        missing,false
+
+  # ---------------------------------------------------------------------------------
+  - name: test_zip_codes_recover_lost_leading_zeros
+    model: stg_contributions
+    description: >
+      392 ZIP codes lost their leading zeros upstream, so 06511 arrives as 6511. Only
+      purely numeric values shorter than five digits are padded; ZIP+4 and malformed
+      entries pass through untouched rather than being mangled into a plausible-looking
+      wrong answer.
+    given:
+      - input: source('raw', 'contributions')
+        format: csv
+        rows: |
+          _content_key,con_date,con_name,con_city_nm,con_state_nm,con_zip_cd,con_occp,con_empr,cmt_nm,cmt_id,cmt_type,cand_name,seat_desc,dist_num,con_type,con_desc,con_amount,con_amount_pd_forgiven,schedule,per_beg_date,per_end_date,election_date,election_desc,int_name,int_city_nm,int_zip_cd,int_occp,int_empr,memo,_ingested_at
+          z1,2022-01-05,A,LA,CA,6511,,,Cmt,1,C,,,,Monetary Contributions (Itemized),,1.00,,A,,,,,,,,,,,
+          z2,2022-01-05,B,LA,CA,90012,,,Cmt,1,C,,,,Monetary Contributions (Itemized),,1.00,,A,,,,,,,,,,,
+          z3,2022-01-05,C,LA,CA,90012-1234,,,Cmt,1,C,,,,Monetary Contributions (Itemized),,1.00,,A,,,,,,,,,,,
+          z4,2022-01-05,D,LA,CA,,,,Cmt,1,C,,,,Monetary Contributions (Itemized),,1.00,,A,,,,,,,,,,,
+    expect:
+      format: csv
+      rows: |
+        contribution_key,contributor_zip
+        z1,06511
+        z2,90012
+        z3,90012-1234
+        z4,

@@ -1,0 +1,25 @@
+version: 2
+
+sources:
+  - name: raw
+    description: >
+      Faithful landing zone for the Socrata extract. Every column arrives as text.
+      Nothing here is cleaned, retyped or filtered -- if the publisher sent it, it is
+      in this table exactly as sent.
+    schema: raw
+    tables:
+      - name: contributions
+        description: >
+          One row per contribution line as disclosed on a CA460 filing, keyed by
+          _content_key (content hash plus occurrence index).
+        columns:
+          - name: _content_key
+            description: Content hash of the business columns plus occurrence index.
+            data_tests:
+              - unique
+              - not_null
+      - name: load_snapshots
+        description: >
+          One row per ingest. The publisher truncates and reloads, so amendments leave
+          no trace upstream; retaining the shape of each load is what makes "what
+          changed?" answerable at all.
