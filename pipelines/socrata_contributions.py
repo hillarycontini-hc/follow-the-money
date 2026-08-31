@@ -89,18 +89,25 @@ def content_hash(row: dict[str, Any]) -> str:
     return hashlib.blake2b(payload.encode("utf-8"), digest_size=16).hexdigest()
 
 
-# Socrata types con_date as calendar_date, but letting the loader infer that produces a
-# timestamp with a timezone, which shifts every date back seven hours and moves
-# contributions across day -- and therefore reporting-period and election-cycle --
+# Every source column is declared, as text, for two separate reasons.
+#
+# Types: Socrata declares con_date as calendar_date, and letting the loader infer that
+# produces a timestamp with a timezone, which shifts every date back seven hours and
+# moves contributions across day -- and therefore reporting-period and election-cycle --
 # boundaries. The raw layer stays faithful text; staging does the typing where it can be
 # tested and where failures are visible.
-RAW_TEXT_COLUMNS = {
-    c: {"data_type": "text"}
-    for c in (
-        "con_date", "per_beg_date", "per_end_date", "election_date",
-        "con_amount", "con_amount_pd_forgiven",
-    )
-}
+#
+# Completeness: an inferred schema only contains columns the loader has actually seen a
+# value for, which makes the landing table's shape a function of *which rows you loaded*
+# rather than of the publisher's schema. int_state_nm is 100% null across all 418,748
+# rows and so never appeared at all. Worse, int_occp and int_empr have only 105 and 79
+# non-null values in twenty-five years, so they exist after a full load and vanish after
+# a narrow one -- a backfill of a single recent year produces a table with different
+# columns, and every model referencing them fails at compile time.
+#
+# Declaring them pins the contract at the boundary: the landing table has the same shape
+# every run, whatever the window happens to contain.
+RAW_TEXT_COLUMNS = {c: {"data_type": "text"} for c in BUSINESS_COLUMNS}
 
 
 @dlt.resource(

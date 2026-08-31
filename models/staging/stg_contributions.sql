@@ -62,16 +62,23 @@ typed as (
         {#
             Intermediary ------------------------------------------------------------
 
-            int_state_nm is deliberately absent. It is 100% null in the source, and the
-            loader does not create a column it has never seen a value for -- so the
-            landing table's shape is a function of the data, not of the publisher's
-            declared schema. Referencing it fails at compile time with "column not
-            found", which is the correct behaviour but an alarming way to discover it.
+            int_state_nm is dropped deliberately: it is 100% null across all 418,748
+            rows and twenty-five years, so carrying it would add a column that can only
+            ever be empty.
 
-            If the publisher ever populates that field, the column will appear and this
-            model will keep ignoring it. That is the trade-off taken knowingly:
-            int_name (27,847 rows, $11.0M), int_occp (105) and int_empr (79) are all
-            live and are carried through.
+            It used to be dropped for a worse reason. The loader originally inferred the
+            landing schema, and an inferred schema only contains columns it has actually
+            seen a value for -- so int_state_nm never existed, and int_occp and int_empr
+            (105 and 79 non-null values in twenty-five years) existed after a full load
+            and disappeared after a narrow one. A CI run over a single recent year built
+            a landing table with different columns than a local full load, and this
+            model failed to compile against it.
+
+            The pipeline now declares every source column explicitly, so the shape is
+            fixed whatever the window contains. int_state_nm is therefore present in
+            the warehouse and omitted here as a modelling choice rather than by
+            accident. int_name (27,847 rows, $11.0M), int_occp and int_empr are carried
+            through.
         #}
         nullif(trim(int_name), '')                          as intermediary_name,
         nullif(trim(int_city_nm), '')                       as intermediary_city,
