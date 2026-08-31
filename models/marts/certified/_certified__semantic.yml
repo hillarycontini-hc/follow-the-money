@@ -1,0 +1,315 @@
+version: 2
+
+# =====================================================================================
+# Semantic layer.
+#
+# These definitions exist because "total contributions" is a genuinely ambiguous
+# question in this dataset, and every plausible reading of it produces a different
+# number. A naive SUM over the source file returns $761,997,407. The defensible answer
+# is $470,020,847. The $292M gap is not rounding: $127.3M of it is loans counted as
+# gifts, $54.6M is public matching funds counted as donations, and $110.1M is one man's
+# loan to himself, counted once as a contribution and again as a loan.
+#
+# The project's own research notes already carried this correction, as a parenthetical
+# hand-written into a markdown table: "(Caruso self-loan -- exclude)". That footnote is
+# a semantic layer with no enforcement. This file is the same knowledge in a form that
+# a query cannot bypass and a change cannot make silently.
+# =====================================================================================
+
+semantic_models:
+  - name: contributions
+    description: >
+      Itemised monetary and in-kind contributions. One row per disclosed contribution
+      line. Loans, public financing and period aggregates are not in this model at all,
+      because they are not contributions.
+    model: ref('fct_contribution')
+    defaults:
+      agg_time_dimension: contribution_date
+
+    entities:
+      - name: contribution
+        type: primary
+        expr: contribution_key
+      - name: committee
+        type: foreign
+        expr: committee_key
+
+    dimensions:
+      - name: contribution_date
+        type: time
+        type_params:
+          time_granularity: day
+      - name: schedule_code
+        type: categorical
+      - name: contributor_state
+        type: categorical
+      - name: contributor_occupation
+        type: categorical
+      - name: contributor_name
+        type: categorical
+      - name: is_developer_contribution
+        type: categorical
+      - name: is_self_loan_mirror
+        type: categorical
+      - name: is_refund
+        type: categorical
+
+    measures:
+      - name: contribution_amount
+        description: Sum of disclosed contribution amounts.
+        agg: sum
+        expr: amount
+
+      - name: contribution_line_count
+        description: Count of disclosed contribution lines.
+        agg: count
+        expr: contribution_key
+
+      - name: distinct_contributor_count
+        description: >
+          Distinct contributor names. Deliberately not called "donors": names are free
+          text and are not resolved to people, so this counts name strings, not humans.
+        agg: count_distinct
+        expr: contributor_name
+
+  # -----------------------------------------------------------------------------------
+  - name: committees
+    description: Committee identity versions, for grouping contributions by filer.
+    model: ref('dim_committee')
+
+    entities:
+      - name: committee
+        type: primary
+        expr: committee_key
+
+    dimensions:
+      - name: committee_name
+        type: categorical
+      - name: committee_type_name
+        type: categorical
+      - name: is_independent_expenditure_type
+        type: categorical
+      - name: office
+        type: categorical
+
+    # No measures. This model exists to supply grouping attributes to contribution
+    # metrics, not to be aggregated itself. Counting committee versions would invite
+    # exactly the fan-out error the semantic layer is here to prevent: a version count
+    # joined to contributions multiplies by the number of contribution lines.
+
+  # -----------------------------------------------------------------------------------
+  - name: unitemized_contributions
+    description: >
+      Period aggregates of sub-threshold giving. A different grain from itemised
+      contributions -- there is no donor -- but the same money in every other respect,
+      and it must be included in any honest total of receipts.
+    model: ref('fct_unitemized_aggregate')
+    defaults:
+      agg_time_dimension: period_end_date
+
+    entities:
+      - name: unitemized
+        type: primary
+        expr: unitemized_key
+      - name: committee
+        type: foreign
+        expr: committee_key
+
+    dimensions:
+      - name: period_end_date
+        type: time
+        type_params:
+          time_granularity: day
+      - name: schedule_code
+        type: categorical
+
+    measures:
+      - name: unitemized_amount
+        description: Sum of period-aggregate amounts.
+        agg: sum
+        expr: amount
+
+
+# =====================================================================================
+metrics:
+  # -----------------------------------------------------------------------------------
+  - name: itemized_contributions
+    label: Contributions received (itemised only)
+    description: >
+      Named-donor contributions. Excludes self-loan mirrors: where a contributor's
+      giving to a committee is matched exactly by a loan on Schedule B, the same money
+      has been disclosed twice and counting both inflates the total by the full amount.
+
+      This is the metric for donor-level questions -- who gave, in what occupation, from
+      where. It is NOT the headline receipts figure: it omits $174.8M of sub-threshold
+      giving that has no donor attached. Use contributions_total for that.
+    type: simple
+    type_params:
+      measure: contribution_amount
+    filter: |
+      {{ Dimension('contribution__is_self_loan_mirror') }} = false
+
+  # -----------------------------------------------------------------------------------
+  - name: unitemized_contributions
+    label: Contributions received (sub-threshold aggregates)
+    description: >
+      Money given below the itemisation threshold, disclosed in bulk with no donor
+      named. Real contributions, and additional to the itemised rows rather than a
+      summary of them -- the median aggregate is 1.5% of its period's itemised total,
+      and the largest belong to committees reporting no itemised giving at all.
+    type: simple
+    type_params:
+      measure: unitemized_amount
+    filter: |
+      {{ Dimension('unitemized__schedule_code') }} in ('A', 'C')
+
+  # -----------------------------------------------------------------------------------
+  - name: contributions_total
+    label: Contributions received
+    description: >
+      The headline figure: all money contributed to LA city committees, named donors
+      and sub-threshold aggregates together.
+
+      Spans two fact tables at two different grains, which is precisely why it belongs
+      in the semantic layer rather than in whichever query happens to need it. Loans and
+      public financing are excluded because they are not contributions; self-loan
+      mirrors are excluded because they are the same money counted twice.
+    type: derived
+    type_params:
+      expr: itemized_contributions + unitemized_contributions
+      metrics:
+        - name: itemized_contributions
+        - name: unitemized_contributions
+
+  # -----------------------------------------------------------------------------------
+  - name: itemized_contributions_including_mirrors
+    label: Itemised contributions including self-loan mirrors (for comparison)
+    description: >
+      Itemised contributions with the self-loan exclusion switched off. Exists solely so
+      the cost of that one omission is visible next to the governed figure rather than
+      asserted in prose: $405,309,734 against $295,214,779, a difference of $110,094,955
+      from a single rule.
+
+      Note this is not the fully naive $761,997,407 -- loans and public financing are
+      excluded by the fact table itself and cannot be summed back in from here, which is
+      the point of putting that boundary in the model rather than in a filter. The full
+      audit ladder lives in analyses/naive_vs_governed.sql.
+
+      Never use this metric for anything but the comparison.
+    type: simple
+    type_params:
+      measure: contribution_amount
+
+  # -----------------------------------------------------------------------------------
+  - name: contribution_count
+    label: Contribution lines
+    type: simple
+    type_params:
+      measure: contribution_line_count
+    filter: |
+      {{ Dimension('contribution__is_self_loan_mirror') }} = false
+
+  # -----------------------------------------------------------------------------------
+  - name: contributor_count
+    label: Distinct contributor names
+    description: >
+      Counts name strings, not people. Contributor names are free text and are not
+      resolved to entities, so the same person spelled two ways counts twice.
+    type: simple
+    type_params:
+      measure: distinct_contributor_count
+    filter: |
+      {{ Dimension('contribution__is_self_loan_mirror') }} = false
+
+  # -----------------------------------------------------------------------------------
+  - name: avg_contribution
+    label: Average contribution
+    description: >
+      A ratio, not a stored column. Averaging a pre-averaged column across any grouping
+      would produce an average of averages, which is wrong whenever the groups differ
+      in size -- which here they always do.
+
+      The numerator is itemized_contributions, not contributions_total, and the
+      mismatch would be easy to miss: sub-threshold aggregates have dollars but no
+      contribution lines, so dividing the full total by the itemised count would inflate
+      the average by mixing a two-grain numerator with a one-grain denominator.
+    type: ratio
+    type_params:
+      numerator: itemized_contributions
+      denominator: contribution_count
+
+  # -----------------------------------------------------------------------------------
+  - name: developer_contributions
+    label: Developer contributions
+    description: >
+      Contributions from people whose stated occupation is real-estate development,
+      under the certified definition. This is the metric the 2019 contribution-ban
+      analysis rests on.
+
+      Without the self-loan exclusion this metric reports $110,153,467 for 2023 instead
+      of $207,433 -- a factor of 531 -- and inverts the finding, appearing to show
+      developer money exploding after the ban rather than falling. The single largest
+      real-estate-developer contributor in the dataset is a candidate lending his own
+      campaign money.
+    type: simple
+    type_params:
+      measure: contribution_amount
+    filter: |
+      {{ Dimension('contribution__is_developer_contribution') }} = true
+      and {{ Dimension('contribution__is_self_loan_mirror') }} = false
+
+  # -----------------------------------------------------------------------------------
+  - name: developer_contributions_naive
+    label: Developer contributions (naive, for comparison)
+    description: >
+      The uncorrected version, retained only to quantify the gap. See the README.
+    type: simple
+    type_params:
+      measure: contribution_amount
+    filter: |
+      {{ Dimension('contribution__is_developer_contribution') }} = true
+
+  # -----------------------------------------------------------------------------------
+  - name: developer_share_of_contributions
+    label: Developer share of contributions
+    description: >
+      Developer money as a proportion of named-donor contributions. The denominator is
+      deliberately itemized_contributions rather than the full total: occupation is only
+      recorded for named donors, so measuring developer giving against a denominator
+      that includes anonymous sub-threshold money would understate the share by
+      construction.
+    type: ratio
+    type_params:
+      numerator: developer_contributions
+      denominator: itemized_contributions
+
+  # -----------------------------------------------------------------------------------
+  - name: contributions_total_prior_year
+    label: Contributions received, prior year
+    description: >
+      The certified total offset by one year, so cycle-over-cycle comparisons use the
+      same governed definition on both sides rather than one governed and one ad hoc.
+    type: derived
+    type_params:
+      expr: contributions_total
+      metrics:
+        - name: contributions_total
+          offset_window: 1 year
+
+  # -----------------------------------------------------------------------------------
+  - name: contributions_yoy_growth
+    label: Contributions year-over-year growth
+    description: >
+      Period-over-period change in governed contributions. Null in the first period of
+      the series, which is correct and should not be coalesced to zero.
+    type: derived
+    type_params:
+      expr: >
+        case
+          when contributions_total_prior_year = 0 then null
+          else (contributions_total - contributions_total_prior_year)
+               / contributions_total_prior_year
+        end
+      metrics:
+        - name: contributions_total
+        - name: contributions_total_prior_year
