@@ -17,6 +17,7 @@ amended period converge instead of duplicating.
 from __future__ import annotations
 
 import hashlib
+import os
 from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Iterator
@@ -40,6 +41,11 @@ AMENDMENT_LOOKBACK_DAYS = 120
 # re-reads them. That is 32 rows -- a rounding error in bandwidth, and the alternative is
 # a pipeline that quietly forgets they exist.
 CURSOR_FLOOR = "1990-01-01"
+
+# CI pulls a bounded window rather than the full 418,748 rows, so the build stays under
+# a minute while still exercising the real endpoint, the real pagination and the real
+# reconciliation. Unset in normal use.
+WINDOW_START = os.environ.get("FTM_SINCE")
 
 # The columns that identify a contribution as disclosed. Deliberately every business
 # column: the filer gives us nothing else to key on.
@@ -111,7 +117,7 @@ def contributions(
 ) -> Iterator[dict[str, Any]]:
     """Page through contributions on or after the watermark, oldest first."""
     watermark = contributed_after.last_value or CURSOR_FLOOR
-    start = _apply_lookback(watermark)
+    start = max(_apply_lookback(watermark), WINDOW_START or "")
 
     seen: dict[str, int] = defaultdict(int)
     ingested_at = datetime.now(tz=timezone.utc).isoformat()
@@ -181,7 +187,18 @@ def load_snapshots(rebuilt_at: datetime, row_count: int) -> Iterator[dict[str, A
 
 
 def source_row_count() -> int:
-    response = requests.get(RESOURCE_URL, params={"$select": "count(1)"}, timeout=60)
+    """Rows the source holds, over the same window the pipeline was asked to load.
+
+    The predicate has to match the one used to extract, or the comparison is a
+    different question than the one worth asking.
+    """
+    params: dict[str, str] = {"$select": "count(1)"}
+    if WINDOW_START:
+        params["$where"] = (
+            f"(con_date >= '{WINDOW_START}' OR con_date IS NULL "
+            f"OR con_date < '{CURSOR_FLOOR}')"
+        )
+    response = requests.get(RESOURCE_URL, params=params, timeout=60)
     return int(response.json()[0]["count_1"])
 
 
@@ -213,7 +230,7 @@ def main() -> None:
 
     rebuilt_at = source_rebuilt_at()
     last_seen = pipeline.state.get("source_rebuilt_at")
-    if last_seen == rebuilt_at.isoformat():
+    if last_seen == rebuilt_at.isoformat() and not os.environ.get("FTM_FORCE"):
         print(f"source unchanged since {rebuilt_at.isoformat()}; nothing to do")
         return
 

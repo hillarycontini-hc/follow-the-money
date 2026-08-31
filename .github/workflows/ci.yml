@@ -1,0 +1,67 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # The source is rebuilt daily. A scheduled run catches upstream changes that break an
+  # assumption -- a new spelling of "Unitemized", a column that stops being all-null --
+  # rather than waiting for someone to notice a number looks wrong.
+  schedule:
+    - cron: "0 13 * * *"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    env:
+      DBT_PROFILES_DIR: ${{ github.workspace }}
+      PYTHONIOENCODING: utf-8
+      # CI loads a bounded window rather than all 418,748 rows. It still hits the real
+      # endpoint, pages for real and reconciles for real; it just does so in seconds.
+      FTM_SINCE: "2024-01-01"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      # Python is pinned to 3.12 deliberately. dbt-core 1.11.14 installs on 3.14 and
+      # then crashes on import with mashumaro UnserializableField, because PEP 649
+      # deferred annotations change how its serialisers resolve types.
+      - name: Install toolchain
+        run: |
+          uv sync
+          uv run dbt deps
+
+      - name: Ingest (bounded window)
+        run: uv run python pipelines/socrata_contributions.py
+
+      - name: Build and test
+        run: uv run dbt build
+
+      - name: Certification boundary
+        run: uv run python scripts/check_certification_boundary.py
+
+      # Running the pipeline twice must leave the warehouse identical. Idempotency is
+      # the property most often claimed and least often demonstrated, and for a merge on
+      # a content key it is the whole design: a re-read of an amended period has to
+      # converge rather than duplicate.
+      - name: Idempotency
+        run: |
+          BEFORE=$(uv run python scripts/warehouse_fingerprint.py)
+          FTM_FORCE=1 uv run python pipelines/socrata_contributions.py
+          AFTER=$(uv run python scripts/warehouse_fingerprint.py)
+          echo "before: $BEFORE"
+          echo "after:  $AFTER"
+          if [ "$BEFORE" != "$AFTER" ]; then
+            echo "::error::second run changed the warehouse; the load is not idempotent"
+            exit 1
+          fi
+
+      - name: Governed metrics still resolve
+        run: |
+          uv run mf query \
+            --metrics contributions_total,developer_contributions \
+            --group-by metric_time__year
