@@ -1,0 +1,25 @@
+version: 2
+
+groups:
+  - name: certified
+    owner:
+      name: Follow the Money maintainers
+      email: hillarycontini@gmail.com
+    description: >
+      Models whose definitions are contracts. Changing a certified metric requires
+      changing a test that pins its value, which means the change is deliberate,
+      reviewed, and visible in a diff. Certified models are access: public and may be
+      depended on by anything.
+
+  - name: sandbox
+    owner:
+      name: Follow the Money maintainers
+      email: hillarycontini@gmail.com
+    description: >
+      Models that are fast, useful, and explicitly not authoritative. Heuristics,
+      string parsing, and exploratory cuts live here. They are access: private so that
+      nothing certified can depend on them -- not as a courtesy, but enforced by dbt and
+      re-checked in CI.
+
+      Leaving work in this tier is a design decision, not a backlog item. Some findings
+      do not deserve the authority that certification confers.
