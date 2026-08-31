@@ -1,0 +1,217 @@
+/// Follow the Money — Power BI semantic model
+///
+/// The same certified metrics as models/marts/certified/_certified__semantic.yml,
+/// expressed in TMDL and DAX. The vocabulary differs more than the ideas do: what
+/// MetricFlow calls a semantic model with measures and metrics, Power BI calls a
+/// semantic model with a star schema and DAX measures.
+///
+/// This is a translation, kept beside the MetricFlow definitions so the two cannot
+/// silently drift into disagreeing about what "contributions received" means. It has
+/// not been round-tripped through a Power BI Desktop instance -- treat it as the
+/// specification, not as a build artifact.
+///
+/// The rules that matter survive the translation intact:
+///   * loans and public financing are not contributions
+///   * self-loan mirrors are the same money disclosed twice
+///   * sub-threshold aggregates are additional money, at a different grain
+///   * averages divide by the itemised count, never the two-grain total
+
+model FollowTheMoney
+	culture: en-US
+	defaultPowerBIDataSourceVersion: powerBI_V3
+
+	/// Relationships are single-direction from dimension to fact on purpose.
+	/// Bi-directional filtering here would reintroduce exactly the fan-out this model
+	/// exists to prevent: a committee counted once per contribution line.
+	relationship fct_contribution_to_dim_committee
+		fromColumn: fct_contribution.committee_key
+		toColumn: dim_committee.committee_key
+		crossFilteringBehavior: oneDirection
+
+	relationship fct_contribution_to_dim_date
+		fromColumn: fct_contribution.contribution_date_key
+		toColumn: dim_date.date_key
+		crossFilteringBehavior: oneDirection
+
+	relationship fct_unitemized_to_dim_date
+		fromColumn: fct_unitemized_aggregate.period_end_date_key
+		toColumn: dim_date.date_key
+		crossFilteringBehavior: oneDirection
+
+table dim_date
+	isHidden: false
+	dataCategory: Time
+
+	column date_key
+		dataType: dateTime
+		isKey: true
+		formatString: yyyy-mm-dd
+
+	column calendar_year
+		dataType: int64
+
+	/// Declared rather than derived. LA city elections ran in odd years through 2017 and
+	/// even years from 2020, so parity does not identify them.
+	column is_city_election_year
+		dataType: boolean
+
+	/// The ordinance was adopted 2019-12-04 but did not bind until after the March 2022
+	/// primary. The gap between those two dates is the entire subject of the developer
+	/// analysis, and neither date is derivable from the data.
+	column is_after_developer_ban_adopted
+		dataType: boolean
+
+	column is_after_developer_ban_effective
+		dataType: boolean
+
+table dim_committee
+	/// Type 2. One row per committee identity version; a committee ID may carry many
+	/// names across cycles.
+	column committee_key
+		dataType: string
+		isKey: true
+
+	column committee_name
+		dataType: string
+
+	column committee_type_name
+		dataType: string
+
+	column is_independent_expenditure_type
+		dataType: boolean
+
+	column is_current_version
+		dataType: boolean
+
+table fct_contribution
+	column contribution_key
+		dataType: string
+		isKey: true
+
+	column committee_key
+		dataType: string
+		isHidden: true
+
+	column contribution_date_key
+		dataType: dateTime
+		isHidden: true
+
+	column amount
+		dataType: decimal
+		/// Deliberately not summable in the field list. Every legitimate total goes
+		/// through a measure that applies the self-loan exclusion; exposing a raw
+		/// implicit sum would let a report author reproduce the $110M error by
+		/// dragging a column onto a canvas.
+		summarizeBy: none
+
+	column is_self_loan_mirror
+		dataType: boolean
+
+	column is_developer_contribution
+		dataType: boolean
+
+	measure 'Itemised Contributions' =
+			CALCULATE(
+				SUM(fct_contribution[amount]),
+				fct_contribution[is_self_loan_mirror] = FALSE
+			)
+		formatString: \$#,0
+		displayFolder: Certified
+		/// Named-donor contributions. Excludes self-loan mirrors, where a contributor's
+		/// giving is matched exactly by a Schedule B loan -- the same money disclosed
+		/// twice. This is the donor-level metric; it is NOT the headline receipts
+		/// figure, because it omits $174.8M of sub-threshold giving.
+
+	measure 'Contributions Received' =
+			[Itemised Contributions] + [Sub-threshold Contributions]
+		formatString: \$#,0
+		displayFolder: Certified
+		/// The headline figure. Spans two tables at two different grains, which is why
+		/// it is a measure rather than a column.
+
+	measure 'Contribution Lines' =
+			CALCULATE(
+				COUNTROWS(fct_contribution),
+				fct_contribution[is_self_loan_mirror] = FALSE
+			)
+		formatString: #,0
+		displayFolder: Certified
+
+	measure 'Average Contribution' =
+			DIVIDE([Itemised Contributions], [Contribution Lines])
+		formatString: \$#,0.00
+		displayFolder: Certified
+		/// Numerator is the itemised total, not Contributions Received. Sub-threshold
+		/// aggregates carry dollars but no contribution lines, so dividing the
+		/// two-grain total by the one-grain count would inflate the average.
+
+	measure 'Developer Contributions' =
+			CALCULATE(
+				SUM(fct_contribution[amount]),
+				fct_contribution[is_developer_contribution] = TRUE,
+				fct_contribution[is_self_loan_mirror] = FALSE
+			)
+		formatString: \$#,0
+		displayFolder: Certified
+		/// Without the self-loan exclusion this reads $107,478,000 for 2023 instead of
+		/// $219,851 -- a factor of 489 -- and inverts the finding.
+
+	measure 'Developer Contributions (naive)' =
+			CALCULATE(
+				SUM(fct_contribution[amount]),
+				fct_contribution[is_developer_contribution] = TRUE
+			)
+		formatString: \$#,0
+		displayFolder: Comparison only
+		/// Retained solely to quantify the gap. Not for reporting.
+
+	measure 'Developer Share' =
+			DIVIDE([Developer Contributions], [Itemised Contributions])
+		formatString: 0.0%
+		displayFolder: Certified
+		/// Denominator is the itemised total: occupation is only recorded for named
+		/// donors, so measuring against a total that includes anonymous sub-threshold
+		/// money would understate the share by construction.
+
+	measure 'Contributions Received PY' =
+			CALCULATE([Contributions Received], SAMEPERIODLASTYEAR(dim_date[date_key]))
+		formatString: \$#,0
+		displayFolder: Certified
+
+	measure 'Contributions YoY Growth' =
+			DIVIDE(
+				[Contributions Received] - [Contributions Received PY],
+				[Contributions Received PY]
+			)
+		formatString: 0.0%
+		displayFolder: Certified
+		/// Blank in the first period of the series, which is correct. Do not wrap this
+		/// in a coalesce to zero: "no prior year" and "no growth" are different facts.
+
+table fct_unitemized_aggregate
+	column unitemized_key
+		dataType: string
+		isKey: true
+
+	column period_end_date_key
+		dataType: dateTime
+		isHidden: true
+
+	column schedule_code
+		dataType: string
+
+	column amount
+		dataType: decimal
+		summarizeBy: none
+
+	measure 'Sub-threshold Contributions' =
+			CALCULATE(
+				SUM(fct_unitemized_aggregate[amount]),
+				fct_unitemized_aggregate[schedule_code] IN {"A", "C"}
+			)
+		formatString: \$#,0
+		displayFolder: Certified
+		/// Giving below the itemisation threshold, disclosed in bulk with no donor
+		/// named. Additional to the itemised rows rather than a summary of them: the
+		/// median aggregate is 1.5% of its period's itemised total, and the largest
+		/// belong to committees reporting no itemised giving at all.
