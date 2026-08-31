@@ -137,11 +137,19 @@ measuring rather than by doubting.
 | Self-loan mirrors are separated from everything else by a clean gap (nearest excluded 0.4117) | The distribution is **continuous**: 0.996401 below, 1.000309 above. The rule survived; its justification did not |
 | Developer money collapsed after the ban took effect | Reverses with the definition: **0.69× baseline** narrow, **1.55× broad**. Opposite conclusions |
 | Schedule I is an unattributable grab-bag | **91.8% is labelled public matching funds** with a named payer |
+| The landing table has a stable shape | It was **inferred from the data**, so a full load and a one-year backfill produced *different columns*. Local runs were green; CI's bounded window failed to compile |
 
 The first load of the pipeline also reported success having written 418,716 of 418,748
 rows. The 32 missing were 8 with dates outside any plausible range and 24 with no date at
 all, silently excluded by the watermark predicate. That is why reconciliation is now part
 of the pipeline rather than a test someone might not run.
+
+The schema bug is the one worth dwelling on, because a comment in this repository already
+described the mechanism — "the landing table's shape is a function of the data" — and it
+was still filed as a quirk of one dead column rather than as a fault. Writing an
+observation down is not the same as acting on it. It took an environment that disagreed
+with mine to make it fail, which is the entire argument for running the thing somewhere
+other than the machine that built it.
 
 ## What this data cannot answer
 
