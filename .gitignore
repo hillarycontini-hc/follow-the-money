@@ -81,7 +81,9 @@ lerna-debug.log*
 *.sqlite3
 *.db
 *.dump
-*.sql
+# NOT *.sql -- this is a dbt project and every model is a .sql file. The original
+# scaffold ignored them wholesale, which would have published a repository containing
+# no models at all. Database dumps are covered by *.dump and *.db above.
 data.csv
 data/raw/
 *.csv.gz
